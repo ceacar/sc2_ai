@@ -18,6 +18,9 @@ class BotCommon(sc2.BotAI):
         self.expansion_ramp = None
         self.enemy_expansion_ramp = None
         self.SUPPLY_DEPOT_TYPE = None
+        self.attacking_units = []
+        self.defending_units= []
+        self.is_attacking_unit_grouped = False
 
     def no_base(self, base_type: 'sc2.contants.NEXUS'):
         return not self.units(base_type).exists
@@ -39,9 +42,9 @@ class BotCommon(sc2.BotAI):
         selected_worker = workergroup.furthest_to(workergroup.center)
         return selected_worker
 
-    async def expand_base(self, base_name: 'UnitTypeId.COMMANDCENTER'):
+    async def expand_base(self, base_name: 'UnitTypeId.COMMANDCENTER', expand_max=2):
         # expand if we can afford and have less than 2 bases
-        if 1 <= self.townhalls.amount < 2 \
+        if 1 <= self.townhalls.amount < expand_max \
                 and self.already_pending(base_name) == 0 \
                 and self.can_afford(base_name):
             # get_next_expansion returns the center of the mineral fields of the next nearby expansion
@@ -141,32 +144,34 @@ class BotCommon(sc2.BotAI):
 
     def move_to_enemy_location(self, units: 'list of real units can attack'):
         # rally to furthest
-        furthest_depot = self.select_furthest_depot_unit()
-        if furthest_depot:
-            self.rally_to_position(units, furthest_depot.position)
-        else:
-            # skip this move if no supply unit is ready
-            return
-        # check if all units are in rally point
-        unit_grouped = True
+        # furthest_depot = self.select_furthest_depot_unit()
+        #if furthest_depot:
+        #    self.rally_to_position(units, furthest_depot.position)
+        #else:
+        #    # skip this move if no supply unit is ready
+        #    return
+        ## check if all units are in rally point
+        #unit_grouped = True
 
-        if furthest_depot:
-            # check if unit is all grouped up
-            for unit in units:
-                unit_away_distance = unit.distance_to(furthest_depot.position)
-                if unit_away_distance > 12:
-                    print(unit, "is away from group point by", unit_away_distance)
-                    unit_grouped = False
+        #if furthest_depot:
+        #    # check if unit is all grouped up
+        #    for unit in units:
+        #        unit_away_distance = unit.distance_to(furthest_depot.position)
+        #        if unit_away_distance > 20:
+        #            print(unit, "is away from group point by", unit_away_distance)
+        #            unit_grouped = False
 
         for unit in units:
             # target = self.known_enemy_structures.random_or(self.enemy_start_locations[0]).position
             # self.combinedActions.append(unit.attack(target))
-            if furthest_depot:
-                if unit_grouped:
-                    loc = random.choice(self.enemy_start_locations[0])
-                    print("attack enemy base at", loc)
-                    if loc:
-                        self.combinedActions.append(unit.attack(loc))
+            #if furthest_depot:
+            #    if unit_grouped:
+            loc = self.enemy_start_locations[0]
+            #loc = random.choice(self.enemy_start_locations[0])
+            # print("enemy_start_locations", self.enemy_start_locations)
+            # print("attack enemy base at", loc)
+            if loc:
+                self.combinedActions.append(unit.attack(loc))
 
     def is_enemy_insight(self, near_building:'a building unit'):
         enemy_threats_nearby = self.is_enemy_nearby(near_building, 30)
@@ -195,14 +200,74 @@ class BotCommon(sc2.BotAI):
                 if furthest_supply_depot_unit:
                     self.rally_to_position(defend_units, furthest_supply_depot_unit.position)
 
+    def can_do_attack(self):
+        # Not Implemented
+        return False
+
+    def get_attack_force(self):
+        # Not Implemented
+        return []
+
+    def group_units(self, units):
+        rand_unit = random.choice(units)
+        for unit in units:
+            unit.move(rand_unit.position)
+
+    def attack_enemy(self, units):
+        if self.can_do_attack():
+            self.attacking_units = self.get_attack_force()
+            print("attack units decided{0}:".format(len(self.attacking_units))
+                  , self.attacking_units)
+
+            self.move_to_enemy_location(self.attacking_units)
+            # AI micro
+            self.attack_enemy(self.attacking_units)
+
+
+    def select_defend_units(self, units)-> 'units can defend':
+        defend_units = []
+        for unit in units:
+            if unit not in self.attacking_units:
+                defend_units.append(unit)
+        return defend_units
+
+    def attack_or_defend(self):
+        if self.can_do_attack():
+            self.attacking_units = self.get_attack_force()
+            #random regroup units for attack
+            roll_res = random.randint(0,100)
+            if roll_res > 40:
+                self.group_units(self.attacking_units)
+                return
+            print("attack units decided{0}:".format(len(self.attacking_units))
+                  , self.attacking_units)
+
+            self.attack_enemy(self.attacking_units)
+
+        # Only defend with non attacking units
+        # This may have potential bug of when attacking, and enemy has dropped main force on base
+        # AI would not be defending itself, this will lead to trade bases
+        self.defending_units = self.select_defend_units(self.get_attack_force())
+        self.defend_base(self.defending_units)
+
+    def nearest_ground_enemy(self, unit:'a real unit', distance:'14'):
+        enemy_ground_units= self.known_enemy_units.not_flying.closer_than(distance, unit)  # hardcoded attackrange of 5
+        sorted_enemy_ground_units = enemy_ground_units.sorted(lambda x: x.distance_to(unit))
+        return sorted_enemy_ground_units
+
+    def nearest_flying_enemy(self, unit:'a real unit', distance:'14'):
+        enemy_ground_units= self.known_enemy_units.flying.closer_than(distance, unit)  # hardcoded attackrange of 5
+        sorted_enemy_ground_units = enemy_ground_units.sorted(lambda x: x.distance_to(unit))
+        return sorted_enemy_ground_units
+
     def attack_enemy(self, units: 'list of real units can attack'):
         # ready to attack, shoot nearest ground unit
         for r in units:
-            enemyGroundUnits = self.known_enemy_units.not_flying.closer_than(14, r)  # hardcoded attackrange of 5
-            if r.weapon_cooldown == 0 and enemyGroundUnits.exists:
-                enemyGroundUnits = enemyGroundUnits.sorted(lambda x: x.distance_to(r))
-                closestEnemy = enemyGroundUnits[0]
-                self.combinedActions.append(r.attack(closestEnemy))
+            enemy_ground_units = self.nearest_ground_enemy(r, 14)
+            if r.weapon_cooldown == 0 and enemy_ground_units.exists:
+                enemy_ground_units = enemy_ground_units.sorted(lambda x: x.distance_to(r))
+                closest_enemy= enemy_ground_units[0]
+                self.combinedActions.append(r.attack(closest_enemy))
                 continue  # continue for loop, dont execute any of the following
 
     async def add_units_cap_if_needed(self, supply_name: 'UnitTypeId.SUPPLYDEPOT'):
@@ -215,9 +280,9 @@ class BotCommon(sc2.BotAI):
                 and self.units(UnitTypeId.SUPPLYDEPOT).not_ready.amount + \
                 self.already_pending(UnitTypeId.SUPPLYDEPOT) < 1:
             if self.can_afford(supply_name):
-                print("supply_left", self.supply_left)
-                print("pending depopt count:",self.units(UnitTypeId.SUPPLYDEPOT).not_ready.amount + self.already_pending(UnitTypeId.SUPPLYDEPOT) < 1)
-                print("build depot")
+                # print("supply_left", self.supply_left)
+                # print("pending depopt count:",self.units(UnitTypeId.SUPPLYDEPOT).not_ready.amount + self.already_pending(UnitTypeId.SUPPLYDEPOT) < 1)
+                # print("build depot at {0}/{1}".format(self.supply_used, self.supply_cap))
                 worker = self.select_worker_for_building()
                 loc = await self.determine_build_location(supply_name, self.townhalls.first.position, placement_gap=1)
                 self.combinedActions.append(worker.build(supply_name, loc))
@@ -257,7 +322,7 @@ class BotCommon(sc2.BotAI):
                 if loc:
                     self.combinedActions.append(worker.build(building, loc))
         if self.count_building(building) >= count:
-            print("built enough ", building)
+            # print("built enough ", building)
             self.build_order_index = self.build_order_index + 1
 
     def retrieve_abilities(self, selected_unit: 'a real unit'):
@@ -298,9 +363,9 @@ class BotCommon(sc2.BotAI):
     async def upgrade_ability(self, unit: 'a real unit like BARRACKS', ability: 'AbilityId.RESEARCH_ADAPTIVETALONS'):
         abilities = await self.get_available_abilities(unit)
         if ability in abilities:
-            print("found ability:", ability)
+            # print("found ability:", ability)
             if self.can_afford(ability) and unit.noqueue:
-                print("upgrading ability", ability)
+                # print("upgrading ability", ability)
                 await self.do(unit(ability))
 
     def allocate_workers_for_gas(self, refinery_type: 'REFINERY'):
@@ -364,107 +429,107 @@ class BotCommon(sc2.BotAI):
 
     # distribute workers function rewritten,
     # the default distribute_workers() function did not saturate gas quickly enough
-    async def distribute_workers(self, performanceHeavy=True, onlySaturateGas=False):
-        # expansion_locations = self.expansion_locations
-        # owned_expansions = self.owned_expansions
+    #async def distribute_workers(self, performanceHeavy=True, onlySaturateGas=False):
+    #    # expansion_locations = self.expansion_locations
+    #    # owned_expansions = self.owned_expansions
 
-        mineralTags = [x.tag for x in self.state.units.mineral_field]
-        # gasTags = [x.tag for x in self.state.units.vespene_geyser]
-        geyserTags = [x.tag for x in self.geysers]
+    #    mineralTags = [x.tag for x in self.state.units.mineral_field]
+    #    # gasTags = [x.tag for x in self.state.units.vespene_geyser]
+    #    geyserTags = [x.tag for x in self.geysers]
 
-        workerPool = self.units & []
-        workerPoolTags = set()
+    #    workerPool = self.units & []
+    #    workerPoolTags = set()
 
-        # find all geysers that have surplus or deficit
-        deficitGeysers = {}
-        surplusGeysers = {}
-        for g in self.geysers.filter(lambda x: x.vespene_contents > 0):
-            # only loop over geysers that have still gas in them
-            deficit = g.ideal_harvesters - g.assigned_harvesters
-            if deficit > 0:
-                deficitGeysers[g.tag] = {"unit": g, "deficit": deficit}
-            elif deficit < 0:
-                surplusWorkers = self.workers.closer_than(10, g).filter(
-                    lambda w: w not in workerPoolTags and len(w.orders) == 1 and w.orders[0].ability.id in [
-                        AbilityId.HARVEST_GATHER] and w.orders[0].target in geyserTags)
-                # workerPool.extend(surplusWorkers)
-                for i in range(-deficit):
-                    if surplusWorkers.amount > 0:
-                        w = surplusWorkers.pop()
-                        workerPool.append(w)
-                        workerPoolTags.add(w.tag)
-                surplusGeysers[g.tag] = {"unit": g, "deficit": deficit}
+    #    # find all geysers that have surplus or deficit
+    #    deficitGeysers = {}
+    #    surplusGeysers = {}
+    #    for g in self.geysers.filter(lambda x: x.vespene_contents > 0):
+    #        # only loop over geysers that have still gas in them
+    #        deficit = g.ideal_harvesters - g.assigned_harvesters
+    #        if deficit > 0:
+    #            deficitGeysers[g.tag] = {"unit": g, "deficit": deficit}
+    #        elif deficit < 0:
+    #            surplusWorkers = self.workers.closer_than(10, g).filter(
+    #                lambda w: w not in workerPoolTags and len(w.orders) == 1 and w.orders[0].ability.id in [
+    #                    AbilityId.HARVEST_GATHER] and w.orders[0].target in geyserTags)
+    #            # workerPool.extend(surplusWorkers)
+    #            for i in range(-deficit):
+    #                if surplusWorkers.amount > 0:
+    #                    w = surplusWorkers.pop()
+    #                    workerPool.append(w)
+    #                    workerPoolTags.add(w.tag)
+    #            surplusGeysers[g.tag] = {"unit": g, "deficit": deficit}
 
-        # find all townhalls that have surplus or deficit
-        deficitTownhalls = {}
-        surplusTownhalls = {}
-        if not onlySaturateGas:
-            for th in self.townhalls:
-                deficit = th.ideal_harvesters - th.assigned_harvesters
-                if deficit > 0:
-                    deficitTownhalls[th.tag] = {"unit": th, "deficit": deficit}
-                elif deficit < 0:
-                    surplusWorkers = self.workers.closer_than(10, th).filter(
-                        lambda w: w.tag not in workerPoolTags and len(w.orders) == 1 and w.orders[0].ability.id in [
-                            AbilityId.HARVEST_GATHER] and w.orders[0].target in mineralTags)
-                    # workerPool.extend(surplusWorkers)
-                    for i in range(-deficit):
-                        if surplusWorkers.amount > 0:
-                            w = surplusWorkers.pop()
-                            workerPool.append(w)
-                            workerPoolTags.add(w.tag)
-                    surplusTownhalls[th.tag] = {"unit": th, "deficit": deficit}
+    #    # find all townhalls that have surplus or deficit
+    #    deficitTownhalls = {}
+    #    surplusTownhalls = {}
+    #    if not onlySaturateGas:
+    #        for th in self.townhalls:
+    #            deficit = th.ideal_harvesters - th.assigned_harvesters
+    #            if deficit > 0:
+    #                deficitTownhalls[th.tag] = {"unit": th, "deficit": deficit}
+    #            elif deficit < 0:
+    #                surplusWorkers = self.workers.closer_than(10, th).filter(
+    #                    lambda w: w.tag not in workerPoolTags and len(w.orders) == 1 and w.orders[0].ability.id in [
+    #                        AbilityId.HARVEST_GATHER] and w.orders[0].target in mineralTags)
+    #                # workerPool.extend(surplusWorkers)
+    #                for i in range(-deficit):
+    #                    if surplusWorkers.amount > 0:
+    #                        w = surplusWorkers.pop()
+    #                        workerPool.append(w)
+    #                        workerPoolTags.add(w.tag)
+    #                surplusTownhalls[th.tag] = {"unit": th, "deficit": deficit}
 
-            if all([len(deficitGeysers) == 0, len(surplusGeysers) == 0,
-                    len(surplusTownhalls) == 0 or deficitTownhalls == 0]):
-                # cancel early if there is nothing to balance
-                return
+    #        if all([len(deficitGeysers) == 0, len(surplusGeysers) == 0,
+    #                len(surplusTownhalls) == 0 or deficitTownhalls == 0]):
+    #            # cancel early if there is nothing to balance
+    #            return
 
-        # check if deficit in gas less or equal than what we have in surplus,
-        # else grab some more workers from surplus bases
-        deficit_gas_count = sum(
-            gasInfo["deficit"] for gasTag, gasInfo in deficitGeysers.items() if gasInfo["deficit"] > 0)
-        surplus_count = sum(-gasInfo["deficit"] for gasTag, gasInfo in surplusGeysers.items() if gasInfo["deficit"] < 0)
-        surplus_count += sum(-thInfo["deficit"] for thTag, thInfo in surplusTownhalls.items() if thInfo["deficit"] < 0)
+    #    # check if deficit in gas less or equal than what we have in surplus,
+    #    # else grab some more workers from surplus bases
+    #    deficit_gas_count = sum(
+    #        gasInfo["deficit"] for gasTag, gasInfo in deficitGeysers.items() if gasInfo["deficit"] > 0)
+    #    surplus_count = sum(-gasInfo["deficit"] for gasTag, gasInfo in surplusGeysers.items() if gasInfo["deficit"] < 0)
+    #    surplus_count += sum(-thInfo["deficit"] for thTag, thInfo in surplusTownhalls.items() if thInfo["deficit"] < 0)
 
-        if deficit_gas_count - surplus_count > 0:
-            # grab workers near the gas who are mining minerals
-            for gTag, gInfo in deficitGeysers.items():
-                if workerPool.amount >= deficit_gas_count:
-                    break
-                workers_near_gas = self.workers.closer_than(10, gInfo["unit"]).filter(
-                    lambda w: w.tag not in workerPoolTags and len(w.orders) == 1 and w.orders[0].ability.id in [
-                        AbilityId.HARVEST_GATHER] and w.orders[0].target in mineralTags)
-                while workers_near_gas.amount > 0 and workerPool.amount < deficit_gas_count:
-                    w = workers_near_gas.pop()
-                    workerPool.append(w)
-                    workerPoolTags.add(w.tag)
+    #    if deficit_gas_count - surplus_count > 0:
+    #        # grab workers near the gas who are mining minerals
+    #        for gTag, gInfo in deficitGeysers.items():
+    #            if workerPool.amount >= deficit_gas_count:
+    #                break
+    #            workers_near_gas = self.workers.closer_than(10, gInfo["unit"]).filter(
+    #                lambda w: w.tag not in workerPoolTags and len(w.orders) == 1 and w.orders[0].ability.id in [
+    #                    AbilityId.HARVEST_GATHER] and w.orders[0].target in mineralTags)
+    #            while workers_near_gas.amount > 0 and workerPool.amount < deficit_gas_count:
+    #                w = workers_near_gas.pop()
+    #                workerPool.append(w)
+    #                workerPoolTags.add(w.tag)
 
-        # now we should have enough workers in the pool to saturate all gases,
-        # and if there are workers left over, make them mine at townhalls that have mineral workers deficit
-        for gTag, gInfo in deficitGeysers.items():
-            if performanceHeavy:
-                # sort furthest away to closest (as the pop() function will take the last element)
-                workerPool.sort(key=lambda x: x.distance_to(gInfo["unit"]), reverse=True)
-            for i in range(gInfo["deficit"]):
-                if workerPool.amount > 0:
-                    w = workerPool.pop()
-                    if len(w.orders) == 1 and w.orders[0].ability.id in [AbilityId.HARVEST_RETURN]:
-                        self.combinedActions.append(w.gather(gInfo["unit"], queue=True))
-                    else:
-                        self.combinedActions.append(w.gather(gInfo["unit"]))
+    #    # now we should have enough workers in the pool to saturate all gases,
+    #    # and if there are workers left over, make them mine at townhalls that have mineral workers deficit
+    #    for gTag, gInfo in deficitGeysers.items():
+    #        if performanceHeavy:
+    #            # sort furthest away to closest (as the pop() function will take the last element)
+    #            workerPool.sort(key=lambda x: x.distance_to(gInfo["unit"]), reverse=True)
+    #        for i in range(gInfo["deficit"]):
+    #            if workerPool.amount > 0:
+    #                w = workerPool.pop()
+    #                if len(w.orders) == 1 and w.orders[0].ability.id in [AbilityId.HARVEST_RETURN]:
+    #                    self.combinedActions.append(w.gather(gInfo["unit"], queue=True))
+    #                else:
+    #                    self.combinedActions.append(w.gather(gInfo["unit"]))
 
-        if not onlySaturateGas:
-            # if we now have left over workers, make them mine at bases with deficit in mineral workers
-            for thTag, thInfo in deficitTownhalls.items():
-                if performanceHeavy:
-                    # sort furthest away to closest (as the pop() function will take the last element)
-                    workerPool.sort(key=lambda x: x.distance_to(thInfo["unit"]), reverse=True)
-                for i in range(thInfo["deficit"]):
-                    if workerPool.amount > 0:
-                        w = workerPool.pop()
-                        mf = self.state.mineral_field.closer_than(10, thInfo["unit"]).closest_to(w)
-                        if len(w.orders) == 1 and w.orders[0].ability.id in [AbilityId.HARVEST_RETURN]:
-                            self.combinedActions.append(w.gather(mf, queue=True))
-                        else:
-                            self.combinedActions.append(w.gather(mf))
+    #    if not onlySaturateGas:
+    #        # if we now have left over workers, make them mine at bases with deficit in mineral workers
+    #        for thTag, thInfo in deficitTownhalls.items():
+    #            if performanceHeavy:
+    #                # sort furthest away to closest (as the pop() function will take the last element)
+    #                workerPool.sort(key=lambda x: x.distance_to(thInfo["unit"]), reverse=True)
+    #            for i in range(thInfo["deficit"]):
+    #                if workerPool.amount > 0:
+    #                    w = workerPool.pop()
+    #                    mf = self.state.mineral_field.closer_than(10, thInfo["unit"]).closest_to(w)
+    #                    if len(w.orders) == 1 and w.orders[0].ability.id in [AbilityId.HARVEST_RETURN]:
+    #                        self.combinedActions.append(w.gather(mf, queue=True))
+    #                    else:
+    #                        self.combinedActions.append(w.gather(mf))

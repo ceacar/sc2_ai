@@ -36,7 +36,6 @@ class GrazeEin(terran_ai.TerranBot):
             await self.chat_send("(probe)(pylon)(cannon)(cannon)(gg)")
 
         first_base = self.get_first_base()
-
         if self.workers.amount <= self.get_unit_upper_limit(UnitTypeId.SCV):
             self.max_worker_if_can(UnitTypeId.SCV, first_base)
 
@@ -53,18 +52,25 @@ class GrazeEin(terran_ai.TerranBot):
         if iteration % 12 == 0 and self.supply_left <= 5:
             await self.add_units_cap_if_needed(UnitTypeId.SUPPLYDEPOT)
 
-        # takes care of idle scv
+        if iteration % 5 == 0:
+            #saturate gas faster than normal distribute_workers
+            self.allocate_workers_for_gas(UnitTypeId.REFINERY)
+
         if iteration % 10 == 0:
+            # takes care of idle scv
             await self.distribute_workers()
 
         await self.build_needed_structure(UnitTypeId.SUPPLYDEPOT,
                                               UnitTypeId.COMMANDCENTER)
 
-        # barrack adding TECHLAB addon
         if iteration % 15 == 0:
+            self.determine_building_list()
+
+        # barrack adding TECHLAB addon
+        if iteration % 30 == 0:
             await self.relocate_building_for_addon(UnitTypeId.BARRACKS, UnitTypeId.BARRACKSFLYING)
             await self.relocate_building_for_addon(UnitTypeId.FACTORY, UnitTypeId.FACTORYFLYING)
-            await self.relocate_building_for_addon(UnitTypeId.STARPORT, UnitTypeId.STARPORTREACTOR)
+            await self.relocate_building_for_addon(UnitTypeId.STARPORT, UnitTypeId.STARPORTFLYING)
 
         if self.units(UnitTypeId.BARRACKS).ready.exists:
             await self.build_addon(UnitTypeId.BARRACKS, UnitTypeId.BARRACKSTECHLAB)
@@ -76,9 +82,8 @@ class GrazeEin(terran_ai.TerranBot):
         # morph_commandcenter
         self.morph_commandcenter()
 
-        #TODO:NEED TO ADD GAME STAGE TO DETERMINE EXPAND NUMBER
-        if self.units(UnitTypeId.SCV).amount >= 18 and self.get_base_count() < 2:
-            await self.expand_base(UnitTypeId.COMMANDCENTER)
+        if self.units(UnitTypeId.SCV).amount >= 18:
+            await self.expand_base_accordingly()
 
         self.pump_force_terran()
 
@@ -86,6 +91,8 @@ class GrazeEin(terran_ai.TerranBot):
             units = self.get_attack_force()
             self.move_to_enemy_location(units)
             self.attack_enemy(units)
+
+        self.tank_siege_ai()
 
         if iteration % 35 == 0:
             units = self.get_attack_force()
@@ -101,7 +108,7 @@ class GrazeEin(terran_ai.TerranBot):
 def main():
     sc2.run_game(sc2.maps.get("AbyssalReefLE"), [
         Bot(Race.Terran, GrazeEin()),
-        Computer(Race.Terran, Difficulty.Easy)
+        Computer(Race.Terran, Difficulty.Medium)
     ], realtime=False)
 
     #play as human
